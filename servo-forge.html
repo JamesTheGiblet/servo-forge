@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+
+<html lang="en"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>ServoForge | RUL Predictor</title> <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"> <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script> <style> /* ========================================================================== THEME: INDUSTRIAL CYBERPUNK (DARK MODE HMI) ========================================================================== */ :root { --bg-dark: #0f172a; --bg-card: #1e293b; --text-main: #e2e8f0; --text-muted: #94a3b8;
+
+        /* Industrial Accents */
+        --neon-orange: #f97316; /* Warning/High Stress */
+        --neon-cyan: #06b6d4;   /* Data/Normal */
+        --neon-green: #10b981;  /* Healthy */
+        --neon-red: #ef4444;    /* Critical Failure */
+        
+        --grid-line: #334155;
+        --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        --radius: 4px; /* Sharp, technical corners */
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'JetBrains Mono', 'Courier New', monospace; }
+    
+    body { 
+        background-color: var(--bg-dark); 
+        color: var(--text-main); 
+        padding-bottom: 60px;
+        background-image: 
+            linear-gradient(rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.95)),
+            linear-gradient(0deg, var(--grid-line) 1px, transparent 1px),
+            linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+        background-size: 100% 100%, 40px 40px, 40px 40px;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER - HMI Style */
+    .hmi-header {
+        border-bottom: 2px solid var(--neon-orange);
+        background: rgba(30, 41, 59, 0.8);
+        backdrop-filter: blur(10px);
+        padding: 20px 0;
+        margin-bottom: 30px;
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+    }
+
+    .header-inner {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .brand {
+        font-size: 1.8rem;
+        font-weight: 800;
+        letter-spacing: -1px;
+        color: white;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .brand i { color: var(--neon-orange); }
+
+    .system-status {
+        font-size: 0.8rem;
+        color: var(--neon-green);
+        border: 1px solid var(--neon-green);
+        padding: 5px 12px;
+        border-radius: 20px;
+        background: rgba(16, 185, 129, 0.1);
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+    /* GRID LAYOUT */
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: 350px 1fr;
+        gap: 20px;
+    }
+
+    @media (max-width: 1024px) { .dashboard-grid { grid-template-columns: 1fr; } }
+
+    /* CARDS */
+    .panel {
+        background: var(--bg-card);
+        border: 1px solid var(--grid-line);
+        border-radius: var(--radius);
+        padding: 20px;
+        position: relative;
+    }
+
+    .panel::before {
+        /* Technical corner marker */
+        content: '';
+        position: absolute;
+        top: -1px; left: -1px;
+        width: 10px; height: 10px;
+        border-top: 2px solid var(--neon-orange);
+        border-left: 2px solid var(--neon-orange);
+    }
+
+    .panel-title {
+        color: var(--neon-cyan);
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    /* CONTROLS */
+    .control-group { margin-bottom: 25px; }
+    .control-label { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-muted); }
+    .control-val { color: var(--neon-orange); font-weight: bold; }
+    
+    input[type=range] {
+        width: 100%;
+        height: 4px;
+        background: var(--grid-line);
+        outline: none;
+        -webkit-appearance: none;
+    }
+    
+    input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 16px;
+        height: 16px;
+        background: var(--neon-orange);
+        cursor: pointer;
+        border-radius: 0; /* Square thumb for industrial look */
+        border: 2px solid white;
+    }
+
+    /* DIGITAL TWIN VISUAL */
+    .twin-box {
+        height: 200px;
+        background: black;
+        border: 1px solid var(--grid-line);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .robot-arm {
+        font-size: 5rem;
+        color: var(--grid-line);
+        transition: color 0.3s;
+    }
+    
+    .twin-box.stress-high .robot-arm { color: var(--neon-red); text-shadow: 0 0 10px var(--neon-red); }
+    .twin-box.stress-med .robot-arm { color: var(--neon-orange); }
+    .twin-box.stress-low .robot-arm { color: var(--neon-green); }
+
+    /* KPIS */
+    .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+    .kpi-box { background: rgba(0,0,0,0.3); padding: 15px; text-align: center; border: 1px solid var(--grid-line); }
+    .kpi-val { font-size: 1.5rem; font-weight: 700; color: white; display: block; }
+    .kpi-sub { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+
+    /* INTERVENTIONS */
+    .switch-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px;
+        background: rgba(0,0,0,0.2);
+        margin-bottom: 8px;
+        border-left: 3px solid transparent;
+        cursor: pointer;
+        transition: 0.2s;
+    }
+    
+    .switch-row:hover { background: rgba(255,255,255,0.05); }
+    .switch-row.active { border-left-color: var(--neon-green); background: rgba(16, 185, 129, 0.05); }
+    
+    .switch-label { font-size: 0.9rem; }
+    .switch-status { font-size: 0.7rem; color: var(--text-muted); }
+    .switch-row.active .switch-status { color: var(--neon-green); font-weight: bold; }
+
+    /* CHART */
+    #rul-chart { width: 100%; height: 400px; }
+    
+    /* ALERTS */
+    .alert-box {
+        margin-top: 20px;
+        padding: 15px;
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid var(--neon-red);
+        color: var(--neon-red);
+        font-size: 0.9rem;
+        display: none;
+        align-items: start;
+        gap: 10px;
+    }
+    .alert-box.visible { display: flex; }
+
+</style>
+
+</head> <body>
+
+<div class="hmi-header">
+    <div class="container header-inner">
+        <div class="brand">
+            <i class="fas fa-robot"></i> ServoForge
+            <span style="font-size: 0.9rem; opacity: 0.6; font-weight: 400; margin-left: 10px;">// RUL PREDICTOR</span>
+        </div>
+        <div class="system-status">
+            <i class="fas fa-circle" style="font-size: 0.6rem;"></i> SYSTEM ONLINE
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    <div class="dashboard-grid">
+        
+        <div class="sidebar">
+            <div class="panel">
+                <div class="panel-title">
+                    <span><i class="fas fa-sliders-h"></i> Telemetry Inputs</span>
+                    <i class="fas fa-wifi" style="opacity:0.5"></i>
+                </div>
+
+                <div class="twin-box" id="twin-visual">
+                    <i class="fas fa-dolly-flatbed robot-arm"></i>
+                    <div style="position: absolute; top: 10px; left: 10px; font-size: 0.7rem; color: var(--neon-cyan);">
+                        ID: AX-204-B<br>
+                        LOC: LINE 4
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Payload Load (kg)</span>
+                        <span class="control-val"><span id="val-load">12</span> kg</span>
+                    </div>
+                    <input type="range" id="input-load" min="0" max="50" value="12" step="1" oninput="updateSim()">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.6rem; color: #666; margin-top: 4px;">
+                        <span>0kg</span><span>Max Rated: 50kg</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Operating Temp (°C)</span>
+                        <span class="control-val"><span id="val-temp">45</span>°C</span>
+                    </div>
+                    <input type="range" id="input-temp" min="20" max="90" value="45" step="1" oninput="updateSim()">
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Cycle Speed (m/s)</span>
+                        <span class="control-val"><span id="val-speed">1.2</span> m/s</span>
+                    </div>
+                    <input type="range" id="input-speed" min="0.5" max="3.0" value="1.2" step="0.1" oninput="updateSim()">
+                </div>
+
+            </div>
+
+            <div class="panel" style="margin-top: 20px;">
+                <div class="panel-title">
+                    <span><i class="fas fa-wrench"></i> Maintenance Stack</span>
+                </div>
+                
+                <div class="switch-row" onclick="toggleTech(this, 'ai-mon')">
+                    <div>
+                        <div class="switch-label">Vibration Analysis AI</div>
+                        <div class="switch-status">OFFLINE</div>
+                    </div>
+                    <i class="fas fa-wave-square" style="color: var(--text-muted)"></i>
+                </div>
+
+                <div class="switch-row" onclick="toggleTech(this, 'auto-lube')">
+                    <div>
+                        <div class="switch-label">Auto-Lubrication</div>
+                        <div class="switch-status">OFFLINE</div>
+                    </div>
+                    <i class="fas fa-oil-can" style="color: var(--text-muted)"></i>
+                </div>
+
+                <div class="switch-row" onclick="toggleTech(this, 'load-opt')">
+                    <div>
+                        <div class="switch-label">Motion Smoothing</div>
+                        <div class="switch-status">OFFLINE</div>
+                    </div>
+                    <i class="fas fa-bezier-curve" style="color: var(--text-muted)"></i>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="kpi-row">
+                <div class="kpi-box">
+                    <span class="kpi-val" id="kpi-rul" style="color: var(--neon-cyan)">0</span>
+                    <span class="kpi-sub">Est. Cycles Remaining</span>
+                </div>
+                <div class="kpi-box">
+                    <span class="kpi-val" id="kpi-health">100%</span>
+                    <span class="kpi-sub">Actuator Health</span>
+                </div>
+                <div class="kpi-box">
+                    <span class="kpi-val" id="kpi-stress">Low</span>
+                    <span class="kpi-sub">Stress Factor</span>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">
+                    <span><i class="fas fa-chart-line"></i> Degradation Analysis (RUL)</span>
+                    <div style="font-size: 0.7rem; color: var(--text-muted);">
+                        <span style="color: var(--neon-red); margin-right: 10px;">-- Failure Threshold (20%)</span>
+                        <span style="color: var(--neon-cyan);">— Predicted Decay</span>
+                    </div>
+                </div>
+                <div id="rul-chart"></div>
+            </div>
+
+            <div class="alert-box" id="alert-panel">
+                <i class="fas fa-exclamation-triangle" style="font-size: 1.5rem;"></i>
+                <div>
+                    <strong>CRITICAL MAINTENANCE ALERT</strong>
+                    <div id="alert-msg">Predicted failure within 30 days based on current thermal stress.</div>
+                </div>
+            </div>
+
+            <div class="panel" style="margin-top: 20px;">
+                <div class="panel-title">
+                    <span><i class="fas fa-dollar-sign"></i> Downtime ROI</span>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 0.9rem;">
+                    <div>
+                        <div style="color: var(--text-muted);">Unplanned Downtime Cost</div>
+                        <div style="font-size: 1.4rem; color: var(--neon-red); font-weight: bold;">$22,500/hr</div>
+                        <div style="font-size: 0.8rem; opacity: 0.7;">Based on line stoppage</div>
+                    </div>
+                    <div>
+                        <div style="color: var(--text-muted);">Life Extension Value</div>
+                        <div style="font-size: 1.4rem; color: var(--neon-green); font-weight: bold;" id="val-savings">$0</div>
+                        <div style="font-size: 0.8rem; opacity: 0.7;">CapEx deferred by interventions</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+    // CONFIG
+    const BASE_CYCLES = 1000000; // Rated life at ideal conditions
+    let activeTechs = new Set();
+
+    const TECH_IMPACT = {
+        'ai-mon': 0.15,    // 15% life extension (early detection)
+        'auto-lube': 0.25, // 25% life extension (friction reduction)
+        'load-opt': 0.10   // 10% life extension (jerk reduction)
+    };
+
+    function toggleTech(el, id) {
+        if(activeTechs.has(id)) {
+            activeTechs.delete(id);
+            el.classList.remove('active');
+            el.querySelector('.switch-status').innerText = 'OFFLINE';
+        } else {
+            activeTechs.add(id);
+            el.classList.add('active');
+            el.querySelector('.switch-status').innerText = 'ACTIVE';
+        }
+        updateSim();
+    }
+
+    function updateSim() {
+        // 1. Gather Inputs
+        const load = parseFloat(document.getElementById('input-load').value);
+        const temp = parseFloat(document.getElementById('input-temp').value);
+        const speed = parseFloat(document.getElementById('input-speed').value);
+
+        // Update Labels
+        document.getElementById('val-load').innerText = load;
+        document.getElementById('val-temp').innerText = temp;
+        document.getElementById('val-speed').innerText = speed;
+
+        // 2. Calculate Stress Factor (Arrhenius-like model simplified)
+        // Baseline 1.0 at 10kg, 25C, 1.0m/s
+        
+        let loadStress = (load / 10) ** 1.5; // Exponential stress from weight
+        let tempStress = Math.max(1, (temp / 25) ** 1.2); // Heat degrades electronics/grease
+        let speedStress = speed ** 1.3; // Kinetic stress
+
+        let totalStress = (loadStress * 0.4) + (tempStress * 0.4) + (speedStress * 0.2);
+        
+        // Apply Interventions (Tech Stack)
+        let reduction = 0;
+        activeTechs.forEach(t => reduction += TECH_IMPACT[t]);
+        
+        // Effective Stress (cannot go below 0.5)
+        let effectiveStress = Math.max(0.5, totalStress * (1 - reduction));
+
+        // 3. Calculate RUL Curve
+        // Formula: Health(t) = 100 * e^(-decay * t)
+        // Decay rate depends on effectiveStress
+        
+        const decayRate = 0.000002 * effectiveStress; 
+        
+        let xData = []; // Cycles
+        let yData = []; // Health %
+        let rulCycles = 0;
+        let failureFound = false;
+
+        // Simulate up to 1.5M cycles with step of 10k
+        for(let c=0; c<=1500000; c+=10000) {
+            let health = 100 * Math.exp(-decayRate * c);
+            
+            // Add minor random noise for "Sensor Data" look
+            if(c > 0) health += (Math.random() - 0.5) * 0.5;
+
+            xData.push(c);
+            yData.push(health);
+
+            if(!failureFound && health <= 20) {
+                rulCycles = c;
+                failureFound = true;
+            }
+        }
+
+        if(!failureFound) rulCycles = 1500000;
+
+        // 4. Update UI
+        document.getElementById('kpi-rul').innerText = (rulCycles / 1000).toFixed(0) + "k";
+        
+        // Stress KPI Color
+        const kpiStress = document.getElementById('kpi-stress');
+        const visual = document.getElementById('twin-visual');
+        
+        visual.classList.remove('stress-low', 'stress-med', 'stress-high');
+        
+        if(effectiveStress > 2.5) {
+            kpiStress.innerText = "CRITICAL";
+            kpiStress.style.color = "var(--neon-red)";
+            visual.classList.add('stress-high');
+            document.getElementById('alert-panel').classList.add('visible');
+        } else if (effectiveStress > 1.5) {
+            kpiStress.innerText = "ELEVATED";
+            kpiStress.style.color = "var(--neon-orange)";
+            visual.classList.add('stress-med');
+            document.getElementById('alert-panel').classList.remove('visible');
+        } else {
+            kpiStress.innerText = "NOMINAL";
+            kpiStress.style.color = "var(--neon-green)";
+            visual.classList.add('stress-low');
+            document.getElementById('alert-panel').classList.remove('visible');
+        }
+
+        // ROI Calc: Assumes Robot Cost $50k. Extension % * $50k
+        const baseLife = 800000; // cycles
+        const gain = Math.max(0, rulCycles - baseLife);
+        const savings = (gain / baseLife) * 50000;
+        document.getElementById('val-savings').innerText = "$" + Math.round(savings/100)*100;
+
+        renderChart(xData, yData, rulCycles);
+    }
+
+    function renderChart(x, y, failureX) {
+        const trace1 = {
+            x: x,
+            y: y,
+            mode: 'lines',
+            line: { color: '#06b6d4', width: 2 },
+            name: 'Actuator Health',
+            fill: 'tozeroy',
+            fillcolor: 'rgba(6, 182, 212, 0.1)'
+        };
+
+        const failureLine = {
+            x: [0, 1500000],
+            y: [20, 20],
+            mode: 'lines',
+            line: { color: '#ef4444', width: 2, dash: 'dot' },
+            name: 'Critical Threshold'
+        };
+
+        const layout = {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            margin: { t: 20, r: 20, l: 40, b: 40 },
+            xaxis: { 
+                title: 'Operating Cycles', 
+                gridcolor: '#334155', 
+                tickfont: { color: '#94a3b8' },
+                titlefont: { color: '#94a3b8' }
+            },
+            yaxis: { 
+                title: 'Health %', 
+                gridcolor: '#334155',
+                tickfont: { color: '#94a3b8' },
+                titlefont: { color: '#94a3b8' },
+                range: [0, 105]
+            },
+            showlegend: false,
+            annotations: [{
+                x: failureX,
+                y: 20,
+                text: 'Predicted Failure',
+                showarrow: true,
+                arrowhead: 2,
+                ax: 0,
+                ay: -40,
+                font: { color: '#ef4444' },
+                arrowcolor: '#ef4444'
+            }]
+        };
+
+        Plotly.newPlot('rul-chart', [trace1, failureLine], layout, {displayModeBar: false});
+    }
+
+    // Init
+    updateSim();
+
+</script>
+
+</body> </html>
